@@ -28,8 +28,10 @@ import (
 // snapshot at the beginning of each scheduling cycle and uses it for its operations in that cycle.
 type Snapshot struct {
 	// nodeInfoMap a map of node name to a snapshot of its NodeInfo.
+	// nodeInfoMap is a map, 键是 node name, 值是 *framework.NodeInfo
 	nodeInfoMap map[string]*framework.NodeInfo
 	// nodeInfoList is the list of nodes as ordered in the cache's nodeTree.
+	// nodeInfoList is *framework.NodeInfo 列表
 	nodeInfoList []*framework.NodeInfo
 	// havePodsWithAffinityNodeInfoList is the list of nodes with at least one pod declaring affinity terms.
 	havePodsWithAffinityNodeInfoList []*framework.NodeInfo
@@ -38,7 +40,9 @@ type Snapshot struct {
 	havePodsWithRequiredAntiAffinityNodeInfoList []*framework.NodeInfo
 	// usedPVCSet contains a set of PVC names that have one or more scheduled pods using them,
 	// keyed in the format "namespace/name".
+	// usedPVCSet 是pvc名称的集合，键的格式是"namespace/name"
 	usedPVCSet sets.String
+	// generation 是 Snapshot 的唯一编号
 	generation int64
 }
 
@@ -53,6 +57,7 @@ func NewEmptySnapshot() *Snapshot {
 }
 
 // NewSnapshot initializes a Snapshot struct and returns it.
+// 初始化Snapshot结构体
 func NewSnapshot(pods []*v1.Pod, nodes []*v1.Node) *Snapshot {
 	nodeInfoMap := createNodeInfoMap(pods, nodes)
 	nodeInfoList := make([]*framework.NodeInfo, 0, len(nodeInfoMap))
@@ -103,6 +108,8 @@ func createNodeInfoMap(pods []*v1.Pod, nodes []*v1.Node) map[string]*framework.N
 	return nodeNameToInfo
 }
 
+// 遍历入参的所有pods的pvc ClainmName，加入到usedPVCSet集合中并返回
+// 一旦该pod还没有调度好，就是 pod.Spec.NodeName == "" 以及该pod没有pvc则处理下一个pod
 func createUsedPVCSet(pods []*v1.Pod) sets.String {
 	usedPVCSet := sets.NewString()
 	for _, pod := range pods {

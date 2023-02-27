@@ -648,6 +648,13 @@ func removeFromSlice(s []*PodInfo, k string) []*PodInfo {
 }
 
 // RemovePod subtracts pod information from this NodeInfo.
+// 做了下面几件事：
+// 1.获取形参pod的名字
+// 2.将该pod从NodeInfo的PodsWithAffinity和PodsWithRequiredAntiAffinity列表中移除
+// 3.通过遍历节点所有的pod，找出形参的pod，若能找到则更新节点的pod（剔除形参的pod），
+// 更新节点的资源request情况，port信息，pvc信息，更新生成id
+// resetSlicesIfEmpty()
+// 若找不到返回无此pod错误信息
 func (n *NodeInfo) RemovePod(pod *v1.Pod) error {
 	k, err := GetPodKey(pod)
 	if err != nil {
@@ -681,6 +688,7 @@ func (n *NodeInfo) RemovePod(pod *v1.Pod) error {
 
 // update node info based on the pod and sign.
 // The sign will be set to `+1` when AddPod and to `-1` when RemovePod.
+// 更新节点的资源request情况，port信息，pvc信息，更新生成id
 func (n *NodeInfo) update(pod *v1.Pod, sign int64) {
 	res, non0CPU, non0Mem := calculateResource(pod)
 	n.Requested.MilliCPU += sign * res.MilliCPU
