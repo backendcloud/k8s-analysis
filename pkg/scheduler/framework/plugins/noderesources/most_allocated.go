@@ -26,6 +26,7 @@ import (
 //
 // Details:
 // (cpu(MaxNodeScore * requested * cpuWeight / capacity) + memory(MaxNodeScore * requested * memoryWeight / capacity) + ...) / weightSum
+// 和 leastResourceScorer 基本反过来
 func mostResourceScorer(resToWeightMap resourceToWeightMap) func(requested, allocable resourceToValueMap) int64 {
 	return func(requested, allocable resourceToValueMap) int64 {
 		var nodeScore, weightSum int64
@@ -47,6 +48,7 @@ func mostResourceScorer(resToWeightMap resourceToWeightMap) func(requested, allo
 // 0 being the lowest priority and 100 being the highest.
 // The more resources are used the higher the score is. This function
 // is almost a reversed version of noderesources.leastRequestedScore.
+// 和 noderesources.leastRequestedScore 基本反过来
 func mostRequestedScore(requested, capacity int64) int64 {
 	if capacity == 0 {
 		return 0

@@ -26,6 +26,9 @@ import (
 //
 // Details:
 // (cpu((capacity-requested)*MaxNodeScore*cpuWeight/capacity) + memory((capacity-requested)*MaxNodeScore*memoryWeight/capacity) + ...)/weightSum
+// leastResourceScorer的返回值也是一个函数
+// resourceToWeightMap key是资源名称，value是该资源的权重
+// resourceToValueMap key是资源名称，value是该资源的数值大小
 func leastResourceScorer(resToWeightMap resourceToWeightMap) func(resourceToValueMap, resourceToValueMap) int64 {
 	return func(requested, allocable resourceToValueMap) int64 {
 		var nodeScore, weightSum int64
@@ -45,6 +48,10 @@ func leastResourceScorer(resToWeightMap resourceToWeightMap) func(resourceToValu
 // The unused capacity is calculated on a scale of 0-MaxNodeScore
 // 0 being the lowest priority and `MaxNodeScore` being the highest.
 // The more unused resources the higher the score is.
+// leastRequestedScore打分机制，分子是capacity - requested，分母是capacity
+// requested=0 为最高分`MaxNodeScore`，requestd>=capacity为最低分0，若capacity为0，返回为0
+// 并非剩余资源越多分越高，而是如其名称，请求越低越高。换个说法，和剩余容量大小无关，只和请求大小有关。
+// framework.MaxNodeScore 值为100，就是打分区间是0~100
 func leastRequestedScore(requested, capacity int64) int64 {
 	if capacity == 0 {
 		return 0

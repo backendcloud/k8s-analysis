@@ -110,6 +110,8 @@ func (r *resourceAllocationScorer) calculateResourceAllocatableRequest(nodeInfo 
 // calculatePodResourceRequest returns the total non-zero requests. If Overhead is defined for the pod
 // the Overhead is added to the result.
 // podResourceRequest = max(sum(podSpec.Containers), podSpec.InitContainers) + overHead
+// GetRequestForResource函数的参数 !r.useRequested 相当于 nonZero 取反后bool值等价。
+// !r.useRequested 为 true表示不用request值，在不设置某一项pod request，不用0值，而是用默认值
 func (r *resourceAllocationScorer) calculatePodResourceRequest(pod *v1.Pod, resource v1.ResourceName) int64 {
 	var podRequest int64
 	for i := range pod.Spec.Containers {
@@ -127,6 +129,12 @@ func (r *resourceAllocationScorer) calculatePodResourceRequest(pod *v1.Pod, reso
 	}
 
 	// If Overhead is being utilized, add to the total requests for the pod
+	//Docker Pod 除了传统的 container 容器之外，还有一个 pause 容器，但我们在计算它的容器开销的时候会忽略 pause 容器。
+	//对于 Kata Pod，除了 container 容器之外，kata-agent, pause, guest-kernel 这些开销都是没有被统计进来的。像这些开销，多的时候甚至能超过 100MB，这些开销我们是没法忽略的。
+	//这就是引入 Pod Overhead 的初衷。
+	//调度程序、资源配额处理以及 Kubelet 的 pod cgroup 创建和驱逐处理将考虑Overhead，以及 pod 的容器请求的总和。
+	//水平和垂直自动缩放是根据容器级别的统计数据计算的，因此不应受到 pod Overhead的影响。
+	//例如调度程序的calculatePodResourceRequest函数在计算某个pod的资源requst请求时，若pod的Overhead请求定义了，则需要将Overhead的值加入request统计。
 	if pod.Spec.Overhead != nil {
 		if quantity, found := pod.Spec.Overhead[resource]; found {
 			podRequest += quantity.Value()
@@ -135,6 +143,11 @@ func (r *resourceAllocationScorer) calculatePodResourceRequest(pod *v1.Pod, reso
 
 	return podRequest
 }
+
+//podResourceRequest = max(sum(podSpec.Containers), podSpec.InitContainers) + overHead
+//上面的公式取了常规容器和 每个init 容器的最大值。因为 init 容器是按顺序运行的，多个init也是按顺序运行的。相反，对常规容器的资源向量求和，因为它们是同时运行。
+//GetRequestForResource函数的参数 !r.useRequested 相当于 nonZero 取反后bool值等价。
+//!r.useRequested 整体为 true 表示不采用request的值（比如零值），而是用默认值（默认值只涉及cpu和memory，cpu默认为0.1核，memory默认为200兆）
 
 // resourcesToWeightMap make weightmap from resources spec
 func resourcesToWeightMap(resources []config.ResourceSpec) resourceToWeightMap {

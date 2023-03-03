@@ -334,6 +334,14 @@ func kubeletConfigFlagPrecedence(kc *kubeletconfiginternal.KubeletConfiguration,
 	return nil
 }
 
+// 根据kubelet配置文件路径的配置内容得到 *kubeletconfiginternal.KubeletConfiguration 对象
+// 若最后得到的*kubeletconfiginternal.KubeletConfiguration 对象的EvictionHard == nil，则使用eviction.DefaultEvictionHard
+//
+//	var DefaultEvictionHard = map[string]string{
+//		"memory.available":  "100Mi",
+//		"nodefs.available":  "10%",
+//		"imagefs.available": "15%",
+//	}
 func loadConfigFile(name string) (*kubeletconfiginternal.KubeletConfiguration, error) {
 	const errFmt = "failed to load Kubelet config file %s, error %v"
 	// compute absolute path based on current working dir
@@ -1176,6 +1184,7 @@ func RunKubelet(kubeServer *options.KubeletServer, kubeDeps *kubelet.Dependencie
 	}
 
 	// process pods and exit.
+	// 如果设置了只运行一次的参数，则执行k.RunOnce，否则执行核心函数startKubelet。
 	if runOnce {
 		if _, err := k.RunOnce(podCfg.Updates()); err != nil {
 			return fmt.Errorf("runonce failed: %w", err)
@@ -1188,6 +1197,7 @@ func RunKubelet(kubeServer *options.KubeletServer, kubeDeps *kubelet.Dependencie
 	return nil
 }
 
+// kubelet.Bootstrap是引入了kubernetes/pkg/kubelet/kubelet.go，将实际运行逻辑转移到了 pkg 目录下
 func startKubelet(k kubelet.Bootstrap, podCfg *config.PodConfig, kubeCfg *kubeletconfiginternal.KubeletConfiguration, kubeDeps *kubelet.Dependencies, enableServer bool) {
 	// start the kubelet
 	go k.Run(podCfg.Updates())

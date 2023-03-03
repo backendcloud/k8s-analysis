@@ -28,6 +28,7 @@ import (
 // consuming no resources whatsoever. We chose these values to be similar to the
 // resources that we give to cluster addon pods (#10653). But they are pretty arbitrary.
 // As described in #11713, we use request instead of limit to deal with resource requirements.
+// resource默认值（resource默认值只涉及cpu和memory，cpu默认为0.1核，memory默认为200MB）
 const (
 	// DefaultMilliCPURequest defines default milli cpu request number.
 	DefaultMilliCPURequest int64 = 100 // 0.1 core
@@ -37,6 +38,7 @@ const (
 
 // GetNonzeroRequests returns the default cpu and memory resource request if none is found or
 // what is provided on the request.
+// 获取 *v1.ResourceList 的 cpu和memory，若未配置，返回的不为0，而是默认值，cpu默认为0.1核，memory默认为200MB
 func GetNonzeroRequests(requests *v1.ResourceList) (int64, int64) {
 	return GetRequestForResource(v1.ResourceCPU, requests, true),
 		GetRequestForResource(v1.ResourceMemory, requests, true)
@@ -45,6 +47,8 @@ func GetNonzeroRequests(requests *v1.ResourceList) (int64, int64) {
 // GetRequestForResource returns the requested values unless nonZero is true and there is no defined request
 // for CPU and memory.
 // If nonZero is true and the resource has no defined request for CPU or memory, it returns a default value.
+// nonZero bool只对cpu和memory两个起作用
+// 该函数的做事是根据 resource name，*v1.ResourceList中查找后，返回该resource name的资源值。
 func GetRequestForResource(resource v1.ResourceName, requests *v1.ResourceList, nonZero bool) int64 {
 	if requests == nil {
 		return 0

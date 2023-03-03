@@ -448,6 +448,7 @@ func NewResource(rl v1.ResourceList) *Resource {
 }
 
 // Add adds ResourceList into Resource.
+// 遍历 rl v1.ResourceList 中每一个resource，adds into r *Resource
 func (r *Resource) Add(rl v1.ResourceList) {
 	if r == nil {
 		return
@@ -503,6 +504,7 @@ func (r *Resource) SetScalar(name v1.ResourceName, quantity int64) {
 }
 
 // SetMaxResource compares with ResourceList and takes max value for each Resource.
+// 比较 r *Resource 和 rl v1.ResourceList 的各个resource，取更大的值更新到 r *Resource
 func (r *Resource) SetMaxResource(rl v1.ResourceList) {
 	if r == nil {
 		return
