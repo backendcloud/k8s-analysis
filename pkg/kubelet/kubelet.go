@@ -1526,10 +1526,16 @@ func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate) {
 		// Introduce some small jittering to ensure that over time the requests won't start
 		// accumulating at approximately the same time from the set of nodes due to priority and
 		// fairness effect.
+		// 状态上报的功能 kl.syncNodeStatus 是在 kubernetes/pkg/kubelet/kubelet.go Run 方法以 goroutine 形式中启动的，
+		// 默认上报间隔 NodeStatusUpdateFrequency.Duration = 10 * time.Second
 		go wait.JitterUntil(kl.syncNodeStatus, kl.nodeStatusUpdateFrequency, 0.04, true, wait.NeverStop)
+		// 检查 kubelet + 容器运行时的当前状态是否能够将节点准备就绪，并尽快将就绪状态同步到 apiserver。
+		// 函数在此类事件之后节点状态更新后返回，或者当节点已准备就绪时返回。
+		// 函数仅在 Kubelet 启动期间执行，通过尽快更新 kubelet 状态、运行时状态和节点状态来改善就绪节点的延迟。
 		go kl.fastStatusUpdateOnce()
 
 		// start syncing lease
+		// 一种新的轻量的状态上报方式
 		go kl.nodeLeaseController.Run(wait.NeverStop)
 	}
 	go wait.Until(kl.updateRuntimeUp, 5*time.Second, wait.NeverStop)

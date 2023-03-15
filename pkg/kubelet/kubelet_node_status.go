@@ -519,10 +519,12 @@ func (kl *Kubelet) syncNodeStatus() {
 	if kl.kubeClient == nil || kl.heartbeatClient == nil {
 		return
 	}
+	// 若该node需要自注册，则自注册到apiserver
 	if kl.registerNode {
 		// This will exit immediately if it doesn't need to do anything.
 		kl.registerWithAPIServer()
 	}
+	// kl.updateNodeStatus(ctx) 方法更新node状态
 	if err := kl.updateNodeStatus(ctx); err != nil {
 		klog.ErrorS(err, "Unable to update node status")
 	}
@@ -532,8 +534,10 @@ func (kl *Kubelet) syncNodeStatus() {
 // change or enough time passed from the last sync.
 func (kl *Kubelet) updateNodeStatus(ctx context.Context) error {
 	klog.V(5).InfoS("Updating node status")
+	// 更新NodeStatus失败超过nodeStatusUpdateRetry次数，停止更新。
 	for i := 0; i < nodeStatusUpdateRetry; i++ {
 		if err := kl.tryUpdateNodeStatus(ctx, i); err != nil {
+			// 若有kl.onRepeatedHeartbeatFailure方法，则在失败1次后执行该方法。
 			if i > 0 && kl.onRepeatedHeartbeatFailure != nil {
 				kl.onRepeatedHeartbeatFailure()
 			}
@@ -555,6 +559,7 @@ func (kl *Kubelet) tryUpdateNodeStatus(ctx context.Context, tryNumber int) error
 	// seem to cause more conflict - the delays are pretty small).
 	// If it result in a conflict, all retries are served directly from etcd.
 	opts := metav1.GetOptions{}
+	// 若入参tryNumber == 0，则从apiserver cache GET 替代 load on apiserver
 	if tryNumber == 0 {
 		util.FromApiserverCache(&opts)
 	}
@@ -566,6 +571,8 @@ func (kl *Kubelet) tryUpdateNodeStatus(ctx context.Context, tryNumber int) error
 		return fmt.Errorf("nil %q node object", kl.nodeName)
 	}
 
+	// changed 返回node status是否有变化
+	// 若有变化，或者即使没变化，但是超过了上报周期kl.nodeStatusReportFrequency，都会上报
 	node, changed := kl.updateNode(ctx, originalNode)
 	shouldPatchNodeStatus := changed || kl.clock.Since(kl.lastStatusReportTime) >= kl.nodeStatusReportFrequency
 
@@ -619,14 +626,23 @@ func (kl *Kubelet) updateNode(ctx context.Context, originalNode *v1.Node) (*v1.N
 
 	kl.setNodeStatus(ctx, node)
 
+	// 若下面的3个条件满足1个
+	// 1. pod cidr改变了
+	// 2. node 状态改变了
+	// 3. os label和 arch label和实际不一致
+	// 怎返回的 changed 为 true
 	changed := podCIDRChanged || nodeStatusHasChanged(&originalNode.Status, &node.Status) || areRequiredLabelsNotPresent
 	return node, changed
 }
 
 // patchNodeStatus patches node on the API server based on originalNode.
 // It returns any potential error, or an updatedNode and refreshes the state of kubelet when successful.
+// patchNodeStatus 是增量patch更新node状态到API server
 func (kl *Kubelet) patchNodeStatus(originalNode, node *v1.Node) (*v1.Node, error) {
 	// Patch the current status on the API server
+	// nodeutil.PatchNodeStatus属于代码仓库 https://github.com/kubernetes/component-helpers
+	// 这个 repo 从https://github.com/kubernetes/kubernetes/tree/master/staging/src/k8s.io/component-helpers同步。
+	// 代码更改在该位置进行，合并到此处k8s.io/kubernetes，然后由机器人同步到此处。
 	updatedNode, _, err := nodeutil.PatchNodeStatus(kl.heartbeatClient.CoreV1(), types.NodeName(kl.nodeName), originalNode, node)
 	if err != nil {
 		return nil, err
@@ -692,6 +708,7 @@ func (kl *Kubelet) recordNodeSchedulableEvent(ctx context.Context, node *v1.Node
 
 // setNodeStatus fills in the Status fields of the given Node, overwriting
 // any fields that are currently set.
+// setNodeStatus 填充和更新node的各个类型的状态值
 // TODO(madhusudancs): Simplify the logic for setting node conditions and
 // refactor the node status condition code out to a different file.
 func (kl *Kubelet) setNodeStatus(ctx context.Context, node *v1.Node) {
@@ -716,6 +733,22 @@ func (kl *Kubelet) getLastObservedNodeAddresses() []v1.NodeAddress {
 
 // defaultNodeStatusFuncs is a factory that generates the default set of
 // setNodeStatus funcs
+// defaultNodeStatusFuncs是工厂函数，生成 setNodeStatus funcs 列表
+// ```go
+//
+//	// handlers called during the tryUpdateNodeStatus cycle
+//	setNodeStatusFuncs []func(context.Context, *v1.Node) error
+//
+// ```
+//
+// ```go
+//
+//	// Generating the status funcs should be the last thing we do,
+//	// since this relies on the rest of the Kubelet having been constructed.
+//	klet.setNodeStatusFuncs = klet.defaultNodeStatusFuncs()
+//
+// ```
+// 对于二次开发而言，如果我们需要 APIServer 掌握更多的 Node 信息，可以在此处添加自定义函数。
 func (kl *Kubelet) defaultNodeStatusFuncs() []func(context.Context, *v1.Node) error {
 	// if cloud is not nil, we expect the cloud resource sync manager to exist
 	var nodeAddressesFunc func() ([]v1.NodeAddress, error)

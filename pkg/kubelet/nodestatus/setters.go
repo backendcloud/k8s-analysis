@@ -553,6 +553,10 @@ func ReadyCondition(
 }
 
 // MemoryPressureCondition returns a Setter that updates the v1.NodeMemoryPressure condition on the node.
+// 传入的三个形参，分别为：
+// 1. 当前时间函数
+// 2. kl.evictionManager.IsUnderMemoryPressure 函数， 作用是返回 是否内存不足
+// 3. 记录节点状态事件函数（调用client-go的记录事件函数）
 func MemoryPressureCondition(nowFunc func() time.Time, // typically Kubelet.clock.Now
 	pressureFunc func() bool, // typically Kubelet.evictionManager.IsUnderMemoryPressure
 	recordEventFunc func(eventType, event string), // typically Kubelet.recordNodeStatusEvent
