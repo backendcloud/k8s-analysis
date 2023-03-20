@@ -233,6 +233,7 @@ func (m *managerImpl) IsUnderPIDPressure() bool {
 
 // synchronize is the main control loop that enforces eviction thresholds.
 // Returns the pod that was killed, or nil if no pod was killed.
+// synchronize 方法是超过阈值强制驱逐的主循环，返回值是kill掉的pod列表
 func (m *managerImpl) synchronize(diskInfoProvider DiskInfoProvider, podFunc ActivePodsFunc) []*v1.Pod {
 	ctx := context.Background()
 	// if we have nothing to do, just return
@@ -325,6 +326,7 @@ func (m *managerImpl) synchronize(diskInfoProvider DiskInfoProvider, podFunc Act
 
 	// evict pods if there is a resource usage violation from local volume temporary storage
 	// If eviction happens in localStorageEviction function, skip the rest of eviction action
+	// 如果 是否可以支持本地存储容量隔离选项为true，则如果本地临时存储中存在资源使用冲突，则逐出 Pod
 	if m.localStorageCapacityIsolation {
 		if evictedPods := m.localStorageEviction(activePods, statsFunc); len(evictedPods) > 0 {
 			return evictedPods
@@ -466,24 +468,31 @@ func (m *managerImpl) reclaimNodeLevelResources(ctx context.Context, signalToRec
 
 // localStorageEviction checks the EmptyDir volume usage for each pod and determine whether it exceeds the specified limit and needs
 // to be evicted. It also checks every container in the pod, if the container overlay usage exceeds the limit, the pod will be evicted too.
+// localStorageEviction方法对pod列表中的pod逐一处理；用statsFunc获取pod的实际状态，然后做三个检查
+// 是否满足emptyDirLimit，是否满足podEphemeralStorageLimit，是否满足containerEphemeralStorageLimit
+// 若有一项不满足，则加入to-be-evicted pod列表，该列表作为方法的返回值
 func (m *managerImpl) localStorageEviction(pods []*v1.Pod, statsFunc statsFunc) []*v1.Pod {
 	evicted := []*v1.Pod{}
 	for _, pod := range pods {
+		// statsFunc方法的作用：获取pod的pod ID，查询对应pod的实际状态
 		podStats, ok := statsFunc(pod)
 		if !ok {
 			continue
 		}
 
+		// 检查该pod实际emptyDir状态是否超过了emptyDir Limit
 		if m.emptyDirLimitEviction(podStats, pod) {
 			evicted = append(evicted, pod)
 			continue
 		}
 
+		// 检查该pod实际podEphemeralStorage状态是否超过了podEphemeralStorage Limit
 		if m.podEphemeralStorageLimitEviction(podStats, pod) {
 			evicted = append(evicted, pod)
 			continue
 		}
 
+		// 检查该pod实际containerEphemeralStorage状态是否超过了containerEphemeralStorage Limit
 		if m.containerEphemeralStorageLimitEviction(podStats, pod) {
 			evicted = append(evicted, pod)
 		}
@@ -499,6 +508,7 @@ func (m *managerImpl) emptyDirLimitEviction(podStats statsapi.PodStats, pod *v1.
 	}
 	for i := range pod.Spec.Volumes {
 		source := &pod.Spec.Volumes[i].VolumeSource
+		// 一旦检查到有配置 pod.Spec.Volumes[i].VolumeSource，则比较 实际状态值和limit值
 		if source.EmptyDir != nil {
 			size := source.EmptyDir.SizeLimit
 			used := podVolumeUsed[pod.Spec.Volumes[i].Name]
@@ -525,6 +535,7 @@ func (m *managerImpl) podEphemeralStorageLimitEviction(podStats statsapi.PodStat
 
 	// pod stats api summarizes ephemeral storage usage (container, emptyDir, host[etc-hosts, logs])
 	podEphemeralStorageTotalUsage := &resource.Quantity{}
+	// 若pod实际状态中 EphemeralStorage.UsedBytes 有数值，则和Limit值进行比较
 	if podStats.EphemeralStorage != nil && podStats.EphemeralStorage.UsedBytes != nil {
 		podEphemeralStorageTotalUsage = resource.NewQuantity(int64(*podStats.EphemeralStorage.UsedBytes), resource.BinarySI)
 	}
@@ -556,6 +567,7 @@ func (m *managerImpl) containerEphemeralStorageLimitEviction(podStats statsapi.P
 			containerUsed.Add(*diskUsage(containerStat.Rootfs))
 		}
 
+		// 比较该Pod下的每一个容器的实际临时存储已用值和Limit比较，有一个容器不满足则返回true
 		if ephemeralStorageThreshold, ok := thresholdsMap[containerStat.Name]; ok {
 			if ephemeralStorageThreshold.Cmp(*containerUsed) < 0 {
 				if m.evictPod(pod, 0, fmt.Sprintf(containerEphemeralStorageMessageFmt, containerStat.Name, ephemeralStorageThreshold.String()), nil, nil) {

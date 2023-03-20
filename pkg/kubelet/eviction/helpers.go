@@ -419,6 +419,9 @@ func formatThreshold(threshold evictionapi.Threshold) string {
 }
 
 // cachedStatsFunc returns a statsFunc based on the provided pod stats.
+// cachedStatsFunc 入参是 PodStats列表，返回值是 statsFunc函数，该函数入参是*v1.Pod，返回值是pod状态和是否找到该pod
+// cachedStatsFunc 在返回前做了个操作：将入参的PodStats列表转成了map，key是podStats[i].PodRef.UID，值是podStats列表元素，
+// 为了方便返回的statsFunc索引pod
 func cachedStatsFunc(podStats []statsapi.PodStats) statsFunc {
 	uid2PodStats := map[string]statsapi.PodStats{}
 	for i := range podStats {
