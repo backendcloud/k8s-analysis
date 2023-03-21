@@ -581,6 +581,9 @@ func (m *managerImpl) containerEphemeralStorageLimitEviction(podStats statsapi.P
 	return false
 }
 
+// 首先，检查pod是否是CriticalPod，CriticalPod包括static pod，mirror pod以及根据优先级来判定是否是CriticalPod
+// static pod 的Annotations key：ConfigSourceAnnotationKey    = "kubernetes.io/config.source" 对应的value是file，普通的pod对应的value是api
+// mirror pod的Annotations key：kubernetes.io/config.mirror ，有此notation就是mirror pod
 func (m *managerImpl) evictPod(pod *v1.Pod, gracePeriodOverride int64, evictMsg string, annotations map[string]string, condition *v1.PodCondition) bool {
 	// If the pod is marked as critical and static, and support for critical pod annotations is enabled,
 	// do not evict such pods. Static pods are not re-admitted after evictions.
@@ -590,6 +593,10 @@ func (m *managerImpl) evictPod(pod *v1.Pod, gracePeriodOverride int64, evictMsg 
 		return false
 	}
 	// record that we are evicting the pod
+	//若不是CriticalPod，进入evict流程
+	// 1. 通过client-go recoder event发送给K8S event记录
+	// 2. evict信息记录日志
+	// 3. 调用  m.killPodFunc evict the pod
 	m.recorder.AnnotatedEventf(pod, annotations, v1.EventTypeWarning, Reason, evictMsg)
 	// this is a blocking call and should only return when the pod and its containers are killed.
 	klog.V(3).InfoS("Evicting pod", "pod", klog.KObj(pod), "podUID", pod.UID, "message", evictMsg)
