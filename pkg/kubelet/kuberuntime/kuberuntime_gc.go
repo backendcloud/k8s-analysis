@@ -327,6 +327,7 @@ func (cgc *containerGC) evictSandboxes(ctx context.Context, evictNonDeletedPods 
 
 // evictPodLogsDirectories evicts all evictable pod logs directories. Pod logs directories
 // are evictable if there are no corresponding pods.
+// evictPodLogsDirectories 清理日志空间, 如果某 pod 已经被删除，则可以删除对应的日志空间及软链.
 func (cgc *containerGC) evictPodLogsDirectories(ctx context.Context, allSourcesReady bool) error {
 	osInterface := cgc.manager.osInterface
 	if allSourcesReady {

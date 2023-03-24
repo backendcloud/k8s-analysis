@@ -111,6 +111,10 @@ type HorizontalController struct {
 }
 
 // NewHorizontalController creates a new HorizontalController.
+// 实例化 HorizontalController 控制器, 内部使用 hpaInformer 注册自定义的 eventHandler 事件处理方法.
+// 另外还定义了两个 lister 实例.
+// 1. hpaLister 主要用来判断 hpa 是否重新入队, 如果已经不存在, 则无需重新入队.
+// 2. podLister 在计算预期副本数时, 需要考虑到有些 pod 未就绪或者正被清理掉.
 func NewHorizontalController(
 	evtNamespacer v1core.EventsGetter,
 	scaleNamespacer scaleclient.ScalesGetter,
@@ -174,6 +178,7 @@ func NewHorizontalController(
 }
 
 // Run begins watching and syncing.
+// 运行 HorizontalController，开始监听和根据监听结果决定是否水平扩缩容
 func (a *HorizontalController) Run(ctx context.Context, workers int) {
 	defer utilruntime.HandleCrash()
 	defer a.queue.ShutDown()
@@ -181,10 +186,13 @@ func (a *HorizontalController) Run(ctx context.Context, workers int) {
 	klog.Infof("Starting HPA controller")
 	defer klog.Infof("Shutting down HPA controller")
 
+	// Run() 方法启动 HorizontalController 控制器, 内部完成 hpa 和 pod 的 informer 同步完成
+	// 等待 informer 数据同步完成
 	if !cache.WaitForNamedCacheSync("HPA", ctx.Done(), a.hpaListerSynced, a.podListerSynced) {
 		return
 	}
 
+	// 启动多个 worker 协程处理 scale 逻辑, 默认为 5 个
 	for i := 0; i < workers; i++ {
 		go wait.UntilWithContext(ctx, a.worker, time.Second)
 	}
@@ -243,12 +251,14 @@ func (a *HorizontalController) worker(ctx context.Context) {
 }
 
 func (a *HorizontalController) processNextWorkItem(ctx context.Context) bool {
+	// 获取由 informer eventHandler 发到 queue 里的 key, 格式为 `namespace/name`
 	key, quit := a.queue.Get()
 	if quit {
 		return false
 	}
 	defer a.queue.Done(key)
 
+	// hpa 核心方法, 由该方法来实现扩缩容
 	deleted, err := a.reconcileKey(ctx, key.(string))
 	if err != nil {
 		utilruntime.HandleError(err)
@@ -262,6 +272,7 @@ func (a *HorizontalController) processNextWorkItem(ctx context.Context) bool {
 	// and removing them from queue. Request can be added by resync before previous request is
 	// removed from queue. If we didn't add request here then in this case one request would be dropped
 	// and HPA would processed after 2 x resyncPeriod.
+	// 如果无异常且没有被删除, 则重新入队, 等待一段时间后又可消费此 hpa
 	if !deleted {
 		a.queue.AddRateLimited(key)
 	}
@@ -441,6 +452,34 @@ func (a *HorizontalController) computeReplicasForMetric(ctx context.Context, hpa
 	return replicaCountProposal, metricNameProposal, timestampProposal, autoscalingv2.HorizontalPodAutoscalerCondition{}, nil
 }
 
+// 实现水平扩缩容的reconcileKey方法返回的第一个参数在下面2种情况，返回true
+// 1. cache.SplitMetaNamespaceKey 解析错误
+// 2. a.hpaLister.HorizontalPodAutoscalers(namespace).Get(name) 根据ns/name找不到*v2.HorizontalPodAutoscaler对象
+//
+// ```go
+// // HorizontalPodAutoscalers returns an object that can list and get HorizontalPodAutoscalers.
+//
+//	func (s *horizontalPodAutoscalerLister) HorizontalPodAutoscalers(namespace string) HorizontalPodAutoscalerNamespaceLister {
+//		return horizontalPodAutoscalerNamespaceLister{indexer: s.indexer, namespace: namespace}
+//	}
+//
+// ```
+//
+// ```go
+// // Get retrieves the HorizontalPodAutoscaler from the indexer for a given namespace and name.
+//
+//	func (s horizontalPodAutoscalerNamespaceLister) Get(name string) (*v2.HorizontalPodAutoscaler, error) {
+//		obj, exists, err := s.indexer.GetByKey(s.namespace + "/" + name)
+//		if err != nil {
+//			return nil, err
+//		}
+//		if !exists {
+//			return nil, errors.NewNotFound(v2.Resource("horizontalpodautoscaler"), name)
+//		}
+//		return obj.(*v2.HorizontalPodAutoscaler), nil
+//	}
+//
+// ```
 func (a *HorizontalController) reconcileKey(ctx context.Context, key string) (deleted bool, err error) {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
@@ -469,6 +508,7 @@ func (a *HorizontalController) reconcileKey(ctx context.Context, key string) (de
 		return false, err
 	}
 
+	// 关键的方法放在return语句，调用a.reconcileAutoscaler处理 scale 逻辑
 	return false, a.reconcileAutoscaler(ctx, hpa, key)
 }
 
@@ -716,6 +756,7 @@ func (a *HorizontalController) reconcileAutoscaler(ctx context.Context, hpaShare
 		return fmt.Errorf("failed to query scale subresource for %s: %v", reference, err)
 	}
 	setCondition(hpa, autoscalingv2.AbleToScale, v1.ConditionTrue, "SucceededGetScale", "the HPA controller was able to get the target's current scale")
+	// 当前 scale 里副本数
 	currentReplicas := scale.Spec.Replicas
 	a.recordInitialRecommendation(currentReplicas, key)
 
@@ -725,11 +766,13 @@ func (a *HorizontalController) reconcileAutoscaler(ctx context.Context, hpaShare
 		metricName            string
 	)
 
+	// 预期的副本数
 	desiredReplicas := int32(0)
 	rescaleReason := ""
 
 	var minReplicas int32
 
+	// 可以不指定Spec.MinReplicas，不指定的时候用默认值1
 	if hpa.Spec.MinReplicas != nil {
 		minReplicas = *hpa.Spec.MinReplicas
 	} else {
@@ -740,17 +783,21 @@ func (a *HorizontalController) reconcileAutoscaler(ctx context.Context, hpaShare
 	rescale := true
 
 	if scale.Spec.Replicas == 0 && minReplicas != 0 {
+		// scale.Spec.Replicas == 0 && minReplicas != 0 当前副本数为0，不知支持HPA。Native serverless支持0副本启动。
 		// Autoscaling is disabled for this resource
 		desiredReplicas = 0
 		rescale = false
 		setCondition(hpa, autoscalingv2.ScalingActive, v1.ConditionFalse, "ScalingDisabled", "scaling is disabled since the replica count of the target is zero")
 	} else if currentReplicas > hpa.Spec.MaxReplicas {
+		// 当前副本数超过了Spec.MaxReplicas，则需要将副本调整至最大副本数Spec.MaxReplicas
 		rescaleReason = "Current number of replicas above Spec.MaxReplicas"
 		desiredReplicas = hpa.Spec.MaxReplicas
 	} else if currentReplicas < minReplicas {
+		// 当前副本数小于minReplicas，则需要将副本调整至最小副本数minReplicas
 		rescaleReason = "Current number of replicas below Spec.MinReplicas"
 		desiredReplicas = minReplicas
 	} else {
+		// 不满足上面3中特殊情况，则需要调用a.computeReplicasForMetrics方法根据metric算出metricDesiredReplicas
 		var metricTimestamp time.Time
 		metricDesiredReplicas, metricName, metricStatuses, metricTimestamp, err = a.computeReplicasForMetrics(ctx, hpa, scale, hpa.Spec.Metrics)
 		if err != nil {
@@ -780,10 +827,12 @@ func (a *HorizontalController) reconcileAutoscaler(ctx context.Context, hpaShare
 		} else {
 			desiredReplicas = a.normalizeDesiredReplicasWithBehaviors(hpa, key, currentReplicas, desiredReplicas, minReplicas)
 		}
+		// desiredReplicas != currentReplicas 需要进行水平扩缩容
 		rescale = desiredReplicas != currentReplicas
 	}
 
 	if rescale {
+		// 进行水平扩缩容，将desiredReplicas写入scale.Spec.Replicas
 		scale.Spec.Replicas = desiredReplicas
 		_, err = a.scaleNamespacer.Scales(hpa.Namespace).Update(ctx, targetGR, scale, metav1.UpdateOptions{})
 		if err != nil {

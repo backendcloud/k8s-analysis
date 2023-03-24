@@ -75,6 +75,7 @@ func (c *ReplicaCalculator) GetResourceReplicas(ctx context.Context, currentRepl
 		return 0, 0, 0, time.Time{}, fmt.Errorf("no pods returned by selector while calculating replica count")
 	}
 
+	// 对 pods 的status进行分组为 就绪 pods, 未就绪 pods, 未找到 metrics 的 pods, 已经被标记删除的 pods
 	readyPodCount, unreadyPods, missingPods, ignoredPods := groupPods(podList, metrics, resource, c.cpuInitializationPeriod, c.delayOfInitialReadinessStatus)
 	removeMetricsForPods(metrics, ignoredPods)
 	removeMetricsForPods(metrics, unreadyPods)
@@ -87,6 +88,7 @@ func (c *ReplicaCalculator) GetResourceReplicas(ctx context.Context, currentRepl
 		return 0, 0, 0, time.Time{}, err
 	}
 
+	// 计算资源的使用率
 	usageRatio, utilization, rawUtilization, err := metricsclient.GetResourceUtilizationRatio(metrics, requests, targetUtilization)
 	if err != nil {
 		return 0, 0, 0, time.Time{}, err
@@ -127,6 +129,7 @@ func (c *ReplicaCalculator) GetResourceReplicas(ctx context.Context, currentRepl
 	}
 
 	// re-run the utilization calculation with our new numbers
+	// 上面填充一些 pod 的 metrics, 重新计算资源使用率
 	newUsageRatio, _, _, err := metricsclient.GetResourceUtilizationRatio(metrics, requests, targetUtilization)
 	if err != nil {
 		return 0, utilization, rawUtilization, time.Time{}, err
@@ -138,6 +141,7 @@ func (c *ReplicaCalculator) GetResourceReplicas(ctx context.Context, currentRepl
 		return currentReplicas, utilization, rawUtilization, timestamp, nil
 	}
 
+	// 计算副本数, 公式为 `使用率 * metrics 个数` 向上取整。
 	newReplicas := int32(math.Ceil(newUsageRatio * float64(len(metrics))))
 	if (newUsageRatio < 1.0 && newReplicas > currentReplicas) || (newUsageRatio > 1.0 && newReplicas < currentReplicas) {
 		// return the current replicas if the change of metrics length would cause a change in scale direction
